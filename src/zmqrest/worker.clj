@@ -39,19 +39,19 @@
     (dotimes [n threads]
       (debug (str "initialize worker " n))
       (future
-        (let [sck (atom (.socket @ctx ZMQ/REP))]
+        (let [sck (.socket @ctx ZMQ/REP)]
           (debug (str "connect worker " n))
-          (.connect @sck "tcp://127.0.0.1:32001")
+          (.connect sck "tcp://127.0.0.1:32001")
           (let [poller (.poller @ctx 1)]
-            (.register poller @sck ZMQ$Poller/POLLIN)
+            (.register poller sck ZMQ$Poller/POLLIN)
             (loop []
               (debug (str "poll worker " n))
               (.poll poller 5000)
               (if (.pollin poller 0)
-                (let [req (request (.recv @sck 0))
+                (let [req (request (.recv sck 0))
                       resp (.dispatch worker (:data req))]
                   (debug (str "receive on worker " n ": " req))
-                  (.send @sck (.toZMQ resp))
+                  (.send sck (.toZMQ resp))
                   (debug (str "send on worker " n ": " resp))))
               (recur))))))
     {:ctx ctx}))
