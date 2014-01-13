@@ -6,12 +6,13 @@
             [zmqrest.web :refer :all])
   (:import [zmqrest.web Request Response]))
 
-; Worker types
-(defprotocol WorkerProtocol
-  (dispatch [this req]))
+; Worker router
+(defprotocol RouterProtocol
+  (dispatch [this req])
+  (register [this path cb]))
 
-(defrecord Worker [data]
-  WorkerProtocol
+(defrecord Router [data]
+  RouterProtocol
   ; Dispatch request
   ; TODO add regex path
   (dispatch [this req]
@@ -26,32 +27,52 @@
         (if (not (nil? cb))
           (cb req)
           {:error 404
-           :msg "Function does not exist"})))))
+           :msg "Function does not exist"}))))
+  (register [this path cb]
+    (update-in this [:callbacks] conj {:path path
+                                       :cb cb})))
 
-(defn register-callback [worker path cb]
-  (update-in worker [:callbacks] conj {:path path
-                                       :cb cb}))
+(defn router
+  "Router constructor"
+  ([] (Router. []))
+  ([data] (Router. data)))
+
+; Spawn worker threads
+(defprotocol WorkerProtocol
+  (config [this])
+  (start [this threads]))
+
+(defrecord Worker [router config]
+  WorkerProtocol
+  (config [this]
+    (merge
+      {:host "tcp://127.0.0.1:32001"
+       :timeout 5000}
+      (:config this)))
+
+  (start [this threads]
+    (let [ctx (atom (ZMQ/context 1))]
+      (dotimes [n threads]
+        (debug (str "initialize worker " n))
+        (future
+          (let [sck (.socket @ctx ZMQ/REP)]
+            (debug (str "connecting worker " n " to " (-> this .config :host)))
+            (.connect sck (-> this .config :host))
+            (let [poller (.poller @ctx 1)]
+              (.register poller sck ZMQ$Poller/POLLIN)
+              (loop []
+                (debug (str "poll worker " n))
+                (.poll poller (-> this .config :timeout))
+                (if (.pollin poller 0)
+                  (let [req (request (.recv sck 0))
+                        resp (.dispatch router (:data req))]
+                    (debug (str "receive on worker " n ": " req))
+                    (.send sck (.toZMQ resp))
+                    (debug (str "send on worker " n ": " resp))))
+                (recur))))))
+      (assoc this :ctx ctx))))
 
 (defn workers
   "Create threaded workers with callbacks"
-  [worker threads]
-  (let [ctx (atom (ZMQ/context 1))]
-    (dotimes [n threads]
-      (debug (str "initialize worker " n))
-      (future
-        (let [sck (.socket @ctx ZMQ/REP)]
-          (debug (str "connect worker " n))
-          (.connect sck "tcp://127.0.0.1:32001")
-          (let [poller (.poller @ctx 1)]
-            (.register poller sck ZMQ$Poller/POLLIN)
-            (loop []
-              (debug (str "poll worker " n))
-              (.poll poller 5000)
-              (if (.pollin poller 0)
-                (let [req (request (.recv sck 0))
-                      resp (.dispatch worker (:data req))]
-                  (debug (str "receive on worker " n ": " req))
-                  (.send sck (.toZMQ resp))
-                  (debug (str "send on worker " n ": " resp))))
-              (recur))))))
-    {:ctx ctx}))
+  ([router] (Worker. router {}))
+  ([router config] (Worker. router config)))

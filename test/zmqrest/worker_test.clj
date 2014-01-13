@@ -1,20 +1,32 @@
 (ns zmqrest.worker-test
   (:require [clojure.test :refer :all]
-            [zmqrest.worker :refer :all])
-  (:import [zmqrest.worker Worker]))
+            [zmqrest.worker :as worker]))
 
-(deftest worker-create
-  (testing "Register callback on worker"
-    (let [worker (Worker. [])
-          with-cb (register-callback
-                    worker
-                    "test"
-                    (fn [x] {:resp "Test"
-                             :foobar (:foobar x)}))]
+(deftest router-create
+  (testing "Create router and register callback on router"
+    (let [router (-> (worker/router [])
+                     (.register
+                       "test"
+                       (fn [x] {:resp "Test"
+                                :foobar (:foobar x)})))]
+      (is (not (nil? router)))
       (are [k v req]
-           (= v (-> (.normalize (.dispatch with-cb req)) k))
+           (= v (-> (.normalize (.dispatch router req)) k))
            :resp "Test" {:func "test"}
            :status 200 {:func "test"}
            :error 404 {:func nil}
            :status 404 {:func nil}
            :foobar "FOOBAR" {:func "test" :foobar "FOOBAR"}))))
+
+(deftest worker-create
+  (testing "Create worker object"
+    (let [router (worker/router [])
+          wrk (worker/workers router)
+          wrk-custom (worker/workers router {:host "tcp://127.0.0.1:33001"
+                                             :timeout 10000})]
+      (are [a b] (= b (a (.config wrk)))
+           :host "tcp://127.0.0.1:32001"
+           :timeout 5000)
+      (are [a b] (= b (a (.config wrk-custom)))
+           :host "tcp://127.0.0.1:33001"
+           :timeout 10000))))

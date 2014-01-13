@@ -1,17 +1,26 @@
 (ns zmqrest.server
-  (:require [zmqrest.daemons :as daemons]
-            [zmqrest.worker :as worker])
-  (:import [zmqrest.worker Worker]))
+  (:require [ring.adapter.jetty :refer :all]
+            [zmqrest.backend :refer [master]])
+  (:import [zmqrest.worker Router]))
+
+(defn default-handler [req]
+  {:status 200
+   :content-type "text/plain"
+   :body "OKAY"})
 
 (defn -main [& args]
-  (let [wrk (->
-              (Worker. [])
-              (worker/register-callback
-                "/test"
+  (let [router (->
+              (Router. [])
+              (.register
+                "/api/test"
                 (fn [x] {:foobar "FOOBAR"}))
-              (worker/register-callback
-                "/version"
+              (.register
+                "/api/version"
                 (fn [x] {:version 1.0})))]
-    (daemons/master {})
-    (worker/workers wrk 5)
-    (daemons/web)))
+    (let [backend (master)
+          workers (.workers backend router)]
+      (.start backend)
+      (.start workers 5)
+      (run-jetty (->> default-handler
+                      (.middleware backend))
+                 {:port 8080}))))

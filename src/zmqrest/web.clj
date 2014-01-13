@@ -1,7 +1,9 @@
 (ns zmqrest.web
+  (:import [org.jeromq ZMQ ZMQQueue ZMQ$Poller])
   (:require [ring.adapter.jetty :refer :all]
             [ring.util.response :as ring]
             [cheshire.core :as cheshire]
+            [taoensso.timbre :as timbre :refer [log debug]]
             [taoensso.nippy :as nippy]))
 
 ; Request and request utility functions
@@ -85,3 +87,49 @@
 (defmethod response (type (hash-map))
   [data]
   (Response. data))
+
+; Middleware creation
+(defn- match-path
+  "Test for matching path to request URI"
+  [req path]
+  (let [path (re-pattern path)]
+    (re-matches path (:uri req))))
+
+(defn middleware
+  "ZMQREST middleware for ring applications"
+  [handler & [config]]
+  (let [ctx (atom (ZMQ/context 1))
+        config (merge
+                 {:host "tcp://127.0.0.1:32002"
+                  :timeout 5000
+                  :path #"^/api/.*"}
+                 config)]
+    (fn [req]
+      (if (match-path req (:path config))
+        ; Start request
+        (do
+          (let [zmqreq (http-to-zmq-req req)
+                sck (.socket @ctx ZMQ/REQ)
+                poller (.poller @ctx 1)]
+            (debug "connecting to " (:host config))
+            (.connect sck (:host config))
+            (debug "send")
+            (.send sck (.toZMQ zmqreq))
+            (.register poller sck ZMQ$Poller/POLLIN)
+            (debug "polling")
+            (.poll poller (:timeout config))
+            (debug "done polling")
+            (try
+              (if (.pollin poller 0)
+                ; Received poll response, convert to HTTP response
+                (do
+                  (debug "receive response")
+                  (.toHTTP (response (.recv sck 0))))
+                ; Polling failed, return error
+                (throw (Exception. "No response")))
+              (catch Exception e
+                (.toHTTP
+                  (response {:error 500
+                             :msg (.getMessage e)}))))))
+        ; Didn't match path, pass this on to normal handler
+        (handler req)))))
