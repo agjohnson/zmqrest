@@ -7,35 +7,67 @@
   (:import [zmqrest.web Request Response]))
 
 ; Worker router
-(defprotocol RouterProtocol
-  (dispatch [this req])
-  (register [this path cb]))
-
-(defrecord Router [data]
-  RouterProtocol
-  ; Dispatch request
-  ; TODO add regex path
-  (dispatch [this req]
-    (let [callbacks (:callbacks this)
-          matches (filter
-                    (fn [x]
-                      (= (:path x)
-                         (:func req)))
-                   callbacks)
-          cb (:cb (first matches))]
-      (Response.
-        (if (not (nil? cb))
-          (cb req)
-          {:error 404
-           :msg "Function does not exist"}))))
-  (register [this path cb]
-    (update-in this [:callbacks] conj {:path path
-                                       :cb cb})))
+(defrecord Router [callbacks])
 
 (defn router
   "Router constructor"
   ([] (Router. []))
-  ([data] (Router. data)))
+  ([cbs] (Router. cbs)))
+
+(defn- call-route
+  "Given a route `route` and request `req`, call the callback with found
+  regex groups -- or without if there were no groups in the regex find"
+  [route req]
+  (let [cb (:cb route)
+        path (:path route)
+        func (:func req)
+        groups (re-find (re-pattern path) func)]
+    (if (vector? groups)
+      ; Call with matching groups
+      (cb req (rest groups))
+      ; Or call without groups if none
+      (cb req))))
+
+; Dispatch request
+(defn dispatch
+  "Dispatch request on router"
+  [router req]
+  (let [callbacks (:callbacks router)
+        matches (filter
+                  (fn [x]
+                    (and
+                      (re-find
+                        (re-pattern (:path x))
+                        (or (:func req) ""))
+                      (= (or (:action req) :get)
+                         (:action x))))
+                 callbacks)]
+    (Response.
+      (if-let [match (first matches)]
+        (try
+          (call-route match req)
+          (catch Exception e
+            {:error 500
+             :msg (.getMessage e)}))
+        {:error 404
+         :msg "Function does not exist"}))))
+
+; Register callback for path
+(defn add-route
+  "Register route on router"
+  ([router path action cb]
+   (update-in router
+              [:callbacks]
+              conj
+              {:path path
+               :action action
+               :cb cb}))
+  ([router path action cb & more]
+   (apply add-route
+          (add-route router path action cb)
+          path
+          more))
+  ([router path cb] (add-route router path :get cb)))
 
 ; Spawn worker threads
 (defprotocol WorkerProtocol
@@ -65,7 +97,7 @@
                 (.poll poller (-> this .config :timeout))
                 (if (.pollin poller 0)
                   (let [req (request (.recv sck 0))
-                        resp (.dispatch router (:data req))]
+                        resp (dispatch router (:data req))]
                     (debug (str "receive on worker " n ": " req))
                     (.send sck (.toZMQ resp))
                     (debug (str "send on worker " n ": " resp))))

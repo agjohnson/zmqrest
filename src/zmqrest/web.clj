@@ -113,7 +113,7 @@
                 poller (.poller @ctx 1)]
             (debug "connecting to " (:host config))
             (.connect sck (:host config))
-            (debug "send")
+            (debug (str "sending from client " zmqreq))
             (.send sck (.toZMQ zmqreq))
             (.register poller sck ZMQ$Poller/POLLIN)
             (debug "polling")

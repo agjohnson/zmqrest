@@ -9,14 +9,13 @@
    :body "OKAY"})
 
 (defn -main [& args]
-  (let [router (->
-              (Router. [])
-              (.register
-                "/api/test"
-                (fn [x] {:foobar "FOOBAR"}))
-              (.register
-                "/api/version"
-                (fn [x] {:version 1.0})))]
+  (let [router (-> (Router. [])
+                   (.register
+                     "/api/test"
+                     (fn [x] {:foobar "FOOBAR"}))
+                   (.register
+                     "/api/version"
+                     (fn [x] {:version 1.0})))]
     (let [backend (master)
           workers (.workers backend router)]
       (.start backend)
