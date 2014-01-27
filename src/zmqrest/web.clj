@@ -2,6 +2,7 @@
   (:import [org.jeromq ZMQ ZMQQueue ZMQ$Poller])
   (:require [ring.adapter.jetty :refer :all]
             [ring.util.response :as ring]
+            [ring.middleware.params :refer [wrap-params]]
             [cheshire.core :as cheshire]
             [taoensso.timbre :as timbre :refer [log debug]]
             [taoensso.nippy :as nippy]))
@@ -52,7 +53,10 @@
                  (keyword? action) action
                  :else :get))
      :func (get req :uri)
-     :cid (str (java.util.UUID/randomUUID))}))
+     :cid (str (java.util.UUID/randomUUID))
+     :params (:params req)
+     :query-params (:query-params req)
+     :form-params (:form-params req)}))
 
 ; Response and response utility functions
 (defprotocol ResponseProtocol
@@ -104,7 +108,7 @@
                   :timeout 5000
                   :path #"^/api/.*"}
                  config)]
-    (fn [req]
+    (wrap-params (fn [req]
       (if (match-path req (:path config))
         ; Start request
         (do
@@ -132,4 +136,4 @@
                   (response {:error 500
                              :msg (.getMessage e)}))))))
         ; Didn't match path, pass this on to normal handler
-        (handler req)))))
+        (handler req))))))
